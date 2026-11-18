@@ -32,10 +32,20 @@ if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 from core import (  # noqa: E402
     BaseHotelScraper,
+    HotelBlockedError,
+    ScrapeInterrupted,
+    Pacer,
     SearchRequest,
     build_ai_extractor,
+    classify_meal_plan,
+    detect_block,
+    free_cancellation,
     load_search_request,
 )
+
+# Cookies the SynXis API requires (Imperva token + SynXis session). Verified
+# 2026-11-18: without them the API answers 401 "Principal not found".
+REQUIRED_COOKIES = ("reese84", "sbeSessionID")
 
 OUTPUT_DIR = project_root / "output"
 
@@ -115,7 +125,9 @@ class LeelaClient:
         self.hotel_id = hotel_id
         self.currency = currency
         self.headless = headless
-        self._blocked = False  # set once blocked/unavailable this run
+        self._blocked = False  # set once the browser itself is unavailable
+        self._session_rebuilt = False  # max ONE cookie/session rebuild per run
+        self.pacer = Pacer.for_group(HOTEL_NAME)
         self._activityid = ""
         self._pw = None
         self._browser = None
@@ -194,15 +206,25 @@ class LeelaClient:
                 page.wait_for_timeout(500)
             self._activityid = cookies.get("sbeSessionID", "")
             page.close()
-            if not self._activityid or "reese84" not in cookies:
-                print(f"[Leela] Warning: Imperva challenge or session initialization incomplete "
-                      f"(reese84={'yes' if 'reese84' in cookies else 'no'}, "
-                      f"activityid={'yes' if self._activityid else 'no'}). "
-                      f"If requests get blocked, try LEELA_HEADLESS=0 in .env.")
-            else:
-                print(f"[Leela] Session ready (challenge cleared; "
-                      f"activityid={'yes' if self._activityid else 'no'}).")
+            missing = [name for name in REQUIRED_COOKIES if not cookies.get(name)]
+            if missing:
+                # Cookie generation FAILED. Don't fire API calls without a session
+                # (that yields 401 "Principal not found" and looks bot-like).
+                self.close()
+                if not self._session_rebuilt:
+                    print(f"[Leela] Cookie generation incomplete (missing {', '.join(missing)}) "
+                          f"-- retrying ONCE with a fresh browser...")
+                    self._session_rebuilt = True
+                    return self._ensure_browser()
+                raise HotelBlockedError(
+                    HOTEL_NAME,
+                    f"cookie generation failed: missing {', '.join(missing)} after 25s "
+                    f"(try LEELA_HEADLESS=0 in .env)",
+                )
+            print(f"[Leela] Session ready (cookies: {', '.join(REQUIRED_COOKIES)}).")
             return True
+        except HotelBlockedError:
+            raise
         except Exception as e:  # noqa: BLE001
             print(f"[Leela] Could not start browser session: {e}\n"
                   f"  If the browser binary is missing, run: playwright install chromium")
@@ -233,9 +255,9 @@ class LeelaClient:
     ) -> Dict[str, Any]:
         """POST the SynXis availability query (via the browser) and return JSON."""
         if self._blocked:
-            return {}  # already unavailable this run; don't hammer / re-log
+            raise RuntimeError("Leela browser session unavailable (see error above)")
         if not self._ensure_browser():
-            return {}
+            raise RuntimeError("Leela browser could not start (see error above)")
         payload = {
             "Paging": {"Size": 200},
             "ProductAvailabilityQuery": {
@@ -280,6 +302,7 @@ class LeelaClient:
             "Version": 1,
         }
 
+        self.pacer.wait()
         try:
             resp = self._ctx.request.post(
                 self.AVAIL_URL,
@@ -288,25 +311,28 @@ class LeelaClient:
                 timeout=40000,
             )
         except Exception as e:  # noqa: BLE001
-            print(f"[Error] Leela request failed: {e}")
-            return {}
+            raise RuntimeError(f"Leela request failed: {e}") from e
 
         text = resp.text()
         content_type = resp.headers.get("content-type", "")
-        if self._looks_like_challenge(text, content_type):
-            self._blocked = True
-            print("[Blocked] Imperva challenge persisted even through the headless "
-                  "browser. Try LEELA_HEADLESS=0 in .env (visible browser) so the "
-                  "challenge can solve. Skipping remaining Leela windows.")
-            return {}
+        reason = detect_block(resp.status, content_type, text)
+        if not reason and self._looks_like_challenge(text, content_type):
+            reason = f"HTTP {resp.status}: Imperva challenge page"
+        if reason:
+            if self._session_rebuilt:
+                # Already rebuilt the session once this run: stop, don't hammer.
+                raise HotelBlockedError(HOTEL_NAME, f"{reason} (after 1 session rebuild)")
+            print(f"[Leela] {reason} -- rebuilding the browser session ONCE and retrying...")
+            self._session_rebuilt = True
+            self.close()
+            return self.get_product_availability(start_date, end_date, adults,
+                                                 child_ages, num_rooms)
         if resp.status != 200:
-            print(f"[Error] Leela availability failed: HTTP {resp.status}.")
-            return {}
+            raise RuntimeError(f"Leela availability failed: HTTP {resp.status}")
         try:
             return json.loads(text)
-        except Exception as e:  # noqa: BLE001
-            print(f"[Error] Could not parse Leela response JSON: {e}")
-            return {}
+        except ValueError as e:
+            raise HotelBlockedError(HOTEL_NAME, f"non-JSON response: {e}") from e
 
     def extract_structured_rooms(
         self,
@@ -348,12 +374,35 @@ class LeelaClient:
 
             rate = rates_by_code.get(rate_code, {})
             rate_name = rate.get("Name") or rate_code
-            rate_desc = _strip_html((rate.get("Details", {}) or {}).get("Description", ""))
+            rate_details = rate.get("Details", {}) or {}
+            rate_desc = _strip_html(rate_details.get("Description", ""))
 
             cancel_code = (product.get("CancelPolicy") or {}).get("Code")
-            cancel_desc = _strip_html(
-                (cancel_by_code.get(cancel_code, {}) or {}).get("Description", "")
+            cancel_obj = cancel_by_code.get(cancel_code, {}) or {}
+            cancel_desc = _strip_html(cancel_obj.get("Description", ""))
+
+            # SynXis: "ChargeWithinDays*" = free until N days before check-in;
+            # "AlwaysChargeCancelFee" = non-refundable. Policies are worded
+            # relative to the 14:00 check-in, hence default_time.
+            charge_type = cancel_obj.get("ChargeType") or ""
+            refundable = (
+                True if charge_type.startswith("ChargeWithinDays")
+                else False if charge_type == "AlwaysChargeCancelFee"
+                else None
             )
+            cancel_cols = free_cancellation(
+                check_in, refundable, cancel_obj.get("CancelTimeIn"),
+                cancel_obj.get("CancelTime"), default_time="1400",
+            )
+            # No structured meal flag in SynXis: classify from code + all text.
+            meal_plan = classify_meal_plan(
+                rate_code or "",
+                rate_name or "",
+                rate_desc + "\n" + _strip_html(rate_details.get("DetailedDescription", "")),
+                None,
+            )
+            # SynXis has no BAR category here; "Rack" class is the public rate.
+            is_bar = "Yes" if rate_details.get("RateClass") == "Rack" else "No"
 
             images = [img.get("Path") for img in room_details.get("ImageList", []) if img.get("Path")]
             images_str = "; ".join(images)
@@ -379,6 +428,9 @@ class LeelaClient:
                 "Rate description in popup modal": rate_desc,
                 "Images url": images_str,
                 "rate type": rate_name,
+                "Meal Plan": meal_plan,
+                "Is BAR": is_bar,
+                **cancel_cols,
                 "Rate Code": rate_code,
                 "Room Code": room_code,
                 "Tax Amount": tax_amount,
@@ -397,6 +449,8 @@ class LeelaScraper(BaseHotelScraper):
 
     name = HOTEL_NAME
     label = HOTEL_LABEL
+    brand = "Leela"
+    auth_cookies = REQUIRED_COOKIES
 
     def __init__(self, use_claude: bool = False):
         self.use_claude = use_claude
@@ -455,6 +509,11 @@ class LeelaScraper(BaseHotelScraper):
                 )
                 print(f"  -> {len(extracted)} room/rate option(s)")
                 all_records.extend(extracted)
+                self.report_progress(windows.index((c_in, c_out)) + 1, len(windows),
+                                     f"{c_in}: {len(extracted)} rates")
+        except ScrapeInterrupted as e:   # blocked or cancelled
+            e.records = all_records      # keep rows scraped so far
+            raise
         finally:
             self.client.close()  # always shut the browser down
 

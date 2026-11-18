@@ -36,6 +36,16 @@ class OutputRecord:
     )
     images_url: str = field(default="", metadata={"header": "Images url"})
     rate_type: str = field(default="", metadata={"header": "rate type"})
+    # ---- Rate classification (core/rates.py) ---- #
+    meal_plan: str = field(default="", metadata={"header": "Meal Plan"})
+    is_bar: str = field(default="", metadata={"header": "Is BAR"})
+    free_cancellation: str = field(default="", metadata={"header": "Free Cancellation"})
+    free_cancellation_until: str = field(
+        default="", metadata={"header": "Free Cancellation Until"}
+    )
+    free_cancel_days: Any = field(
+        default="", metadata={"header": "Free Cancel Days Before Check-in"}
+    )
     rate_code: str = field(default="", metadata={"header": "Rate Code"})
     room_code: str = field(default="", metadata={"header": "Room Code"})
     tax_amount: Any = field(default="", metadata={"header": "Tax Amount"})
@@ -43,6 +53,16 @@ class OutputRecord:
     available_inventory: Any = field(
         default="", metadata={"header": "Available Inventory"}
     )
+    # ---- Price + GST (core/pricing.py). No TAC: the team applies it. ---- #
+    rate_category: str = field(default="", metadata={"header": "Rate Category"})
+    nights: Any = field(default="", metadata={"header": "Nights"})
+    nightly_rates: str = field(default="", metadata={"header": "Nightly Rates (excl. tax)"})
+    gst_pct: str = field(default="", metadata={"header": "GST %"})
+    gst_amount: Any = field(default="", metadata={"header": "GST Amount"})
+    price_incl_gst: Any = field(default="", metadata={"header": "Price incl. GST"})
+    per_night_excl: Any = field(default="", metadata={"header": "Per Night excl. GST"})
+    per_night_incl: Any = field(default="", metadata={"header": "Per Night incl. GST"})
+    gst_check: str = field(default="", metadata={"header": "GST Check"})
 
 
 def csv_fields() -> List[str]:

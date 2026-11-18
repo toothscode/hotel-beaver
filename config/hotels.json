@@ -1,0 +1,34 @@
+{
+  "_readme": "Hotels the dashboard can scrape. IHCL hotels (engine 'ihcl') need only this entry. hotel_id comes from the IHCL Sanity catalog (verified 2026-11-18). Prices only -- no TAC applied.",
+
+  "pricing": {
+    "gst_low_pct": 5,
+    "gst_high_pct": 18,
+    "gst_threshold_per_night": 7500,
+    "gst_threshold_inclusive": true,
+    "_gst_note": "PENDING TEAM CONFIRMATION: GST slab decided on price excl. GST per night per room; < 7,500 -> 5%, else 18%; exactly 7,500 -> 5% while inclusive=true. TAC/discounts are applied by the team later, not by this tool."
+  },
+
+
+  "hotels": [
+    { "key": "taj_tirupati", "name": "Taj Tirupati, Tirupati", "brand": "Taj", "engine": "ihcl", "hotel_id": "b862d039-3846-4fd0-8127-a3b8f5f2d9e2", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_palace_new_delhi", "name": "Taj Palace, New Delhi", "brand": "Taj", "engine": "ihcl", "hotel_id": "288269fe-6d2d-4a25-be73-780418822a53", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_surajkund", "name": "Taj Surajkund Resort & Spa, Delhi NCR", "brand": "Taj", "engine": "ihcl", "hotel_id": "cec5c131-45fd-4254-bb90-d55d58031332", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_damdama_lake", "name": "Taj Damdama Lake Resort & Spa, Gurugram", "brand": "Taj", "engine": "ihcl", "hotel_id": "4ec42558-844b-4d8d-859f-340533a813f5", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_gandhinagar", "name": "Taj Gandhinagar Resort & Spa, Gujarat", "brand": "Taj", "engine": "ihcl", "hotel_id": "a796add2-503b-4692-bf3e-2682b92da2c8", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "boulevard9_nadiad", "name": "Boulevard9, Nadiad - IHCL SeleQtions", "brand": "SeleQtions", "engine": "ihcl", "hotel_id": "a36521f8-5b84-4f86-83c6-36c4b05b0b80", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "vivanta_ekta_nagar", "name": "Vivanta Ekta Nagar, Statue of Unity", "brand": "Vivanta", "engine": "ihcl", "hotel_id": "dd593063-1167-463c-81f0-561fa8e50f19", "tenant": "vivanta", "site": "https://www.vivantahotels.com" },
+    { "key": "gateway_diu", "name": "Gateway Diu", "brand": "Gateway", "engine": "ihcl", "hotel_id": "157b8738-7bee-43c0-b9c5-9cb067bcc59d", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "fort_house_diu", "name": "The Fort House, Diu - IHCL SeleQtions", "brand": "SeleQtions", "engine": "ihcl", "hotel_id": "3948fa81-5099-484a-a658-bd76e78c1196", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "vivanta_katra", "name": "Vivanta Katra, Vaishno Devi", "brand": "Vivanta", "engine": "ihcl", "hotel_id": "dd309ab7-d9b7-44a3-967a-9a5a50f0a46e", "tenant": "vivanta", "site": "https://www.vivantahotels.com" },
+    { "key": "taj_bangalore", "name": "Taj Bangalore, Bengaluru", "brand": "Taj", "engine": "ihcl", "hotel_id": "ae9b1fe3-8126-408d-a26e-9e5ad92a5848", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_falaknuma_palace", "name": "Taj Falaknuma Palace, Hyderabad", "brand": "Taj", "engine": "ihcl", "hotel_id": "d0394a12-8f1f-47ed-a637-c107ca1cf261", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_exotica_andamans", "name": "Taj Exotica Resort & Spa, Andamans (Havelock)", "brand": "Taj", "engine": "ihcl", "hotel_id": "0e40b99b-6547-4e51-99d3-9863d14986d0", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_fishermans_cove", "name": "Taj Fisherman's Cove Resort & Spa, Chennai", "brand": "Taj", "engine": "ihcl", "hotel_id": "d5db6d30-9fb4-4605-b748-ff2b05e330da", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "savoy_ooty", "name": "Savoy, Ooty - IHCL SeleQtions", "brand": "SeleQtions", "engine": "ihcl", "hotel_id": "9f7d81d0-aafd-4ef6-994b-644be729834c", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "taj_mahal_new_delhi", "name": "Taj Mahal, New Delhi", "brand": "Taj", "engine": "ihcl", "hotel_id": "51478b7d-f166-4ab9-9f53-167fbe45aac8", "tenant": "taj", "site": "https://www.tajhotels.com" },
+
+    { "key": "taj_lands_end_mumbai", "name": "Taj Lands End, Mumbai", "brand": "Taj", "engine": "ihcl", "hotel_id": "e1058dfa-fe44-4933-bb1b-85621258d217", "tenant": "taj", "site": "https://www.tajhotels.com" },
+    { "key": "vivanta_ahmedabad_sg_highway", "name": "Vivanta Ahmedabad, SG Highway", "brand": "Vivanta", "engine": "ihcl", "hotel_id": "d361c899-95fe-434a-943e-bca0b3cdb9b2", "tenant": "vivanta", "site": "https://www.vivantahotels.com" }
+  ]
+}

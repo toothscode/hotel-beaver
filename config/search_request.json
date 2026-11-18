@@ -1,7 +1,7 @@
 {
   "start_date": "today",
-  "scrape_for_n_days": 10,
-  "night_duration": 2,
+  "scrape_for_n_days": 100,
+  "night_duration": 1,
   "rooms": [
     { "adults": 2, "children": [], "infants": 0 }
   ]

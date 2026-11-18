@@ -19,6 +19,15 @@ from .output import (
 )
 from .base import BaseHotelScraper
 from .rate_limiter import RateLimiter, SlidingWindowRateLimiter
+from .access import (
+    REQUEST_TIMEOUT_S,
+    HotelBlockedError,
+    Pacer,
+    RunCancelled,
+    ScrapeInterrupted,
+    detect_block,
+)
+from .rates import classify_meal_plan, free_cancellation
 from .ai import (
     AIExtractor,
     ClaudeExtractor,
@@ -37,6 +46,14 @@ __all__ = [
     "BaseHotelScraper",
     "RateLimiter",
     "SlidingWindowRateLimiter",
+    "REQUEST_TIMEOUT_S",
+    "HotelBlockedError",
+    "Pacer",
+    "RunCancelled",
+    "ScrapeInterrupted",
+    "detect_block",
+    "classify_meal_plan",
+    "free_cancellation",
     "AIExtractor",
     "ClaudeExtractor",
     "OpenAIExtractor",
