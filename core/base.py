@@ -27,8 +27,10 @@ from __future__ import annotations
 from abc import ABC, abstractmethod
 from datetime import datetime
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
+from .access import HotelBlockedError, ScrapeInterrupted
+from .pricing import apply_prices
 from .search_request import SearchRequest
 from .output import output_path as build_output_path, write_csv
 
@@ -40,6 +42,23 @@ class BaseHotelScraper(ABC):
     name: str = ""
     #: Short label used in the output filename: "<label> - <run date>.csv".
     label: str = ""
+    #: Hotels sharing one bot-protection front (e.g. all IHCL hotels share one
+    #: Akamai). Once one is blocked, the orchestrator skips the rest of the
+    #: group this run. Default: the hotel is its own group.
+    block_group: str = ""
+    #: Cookies the site's API REQUIRES (e.g. Imperva "reese84"). Empty tuple =
+    #: verified cookie-free. Reported by tools/check_access.py -- any new hotel
+    #: that needs cookies must declare them here and pass that check first.
+    auth_cookies: tuple = ()
+    #: GST slab settings for the price columns (see core/pricing.py).
+    pricing_settings: Optional[Dict[str, float]] = None
+    #: Optional callback(done, total, note) set by the dashboard job runner.
+    progress_cb: Optional[Callable[[int, int, str], None]] = None
+
+    def report_progress(self, done: int, total: int, note: str = "") -> None:
+        """Scrapers call this after each check-in date (no-op without a callback)."""
+        if self.progress_cb:
+            self.progress_cb(done, total, note)
 
     # ------------------------------------------------------------------ #
     # Hotel-specific: implemented by each subclass
@@ -78,14 +97,30 @@ class BaseHotelScraper(ABC):
         if not self.name:
             raise ValueError(f"{type(self).__name__} must set class attribute `name`")
 
-        records = self.scrape(request)
+        try:
+            records = self.scrape(request)
+        except ScrapeInterrupted as e:
+            # Blocked or cancelled: keep (and stamp + price) the rows scraped
+            # so far, then re-raise so the orchestrator reports it.
+            if isinstance(e, HotelBlockedError):
+                e.block_group = e.block_group or self.group
+            self._stamp(e.records)
+            apply_prices(e.records, self.pricing_settings)
+            raise
         records = self.postprocess(records, request)
+        self._stamp(records)
+        apply_prices(records, self.pricing_settings)
+        return records
 
+    @property
+    def group(self) -> str:
+        return self.block_group or self.name
+
+    def _stamp(self, records: List[Dict[str, Any]]) -> None:
         scrapped_on = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         for row in records:
             row.setdefault("Hotel Name", self.name)
             row.setdefault("Scrapped On", scrapped_on)
-        return records
 
     def run(
         self,

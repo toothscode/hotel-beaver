@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """
-Taj Lands End, Mumbai — hotel scraper.
+Taj Palace, New Delhi — hotel scraper.
 
-Self-contained for this hotel: the low-level Taj API/CMS client (`TajClient`)
-and the `BaseHotelScraper` implementation (`TajScraper`) live here together.
+Self-contained for this hotel: the low-level Taj API/CMS client (`TajPalaceClient`)
+and the `BaseHotelScraper` implementation (`TajPalaceScraper`) live here together.
 Shared pieces (the scraper interface, AI extractor, rate limiter, CSV model)
 come from the root `core` package; secrets/settings come from the root `.env`.
 """
@@ -29,12 +29,21 @@ project_root = current_dir.parents[1]
 if str(project_root) not in sys.path:
     sys.path.insert(0, str(project_root))
 from core import (  # noqa: E402
+    REQUEST_TIMEOUT_S,
     BaseHotelScraper,
+    HotelBlockedError,
+    Pacer,
     RoomOccupancy,
     SearchRequest,
     build_ai_extractor,
+    classify_meal_plan,
+    detect_block,
+    free_cancellation,
     load_search_request,
 )
+
+# Every IHCL hotel (Taj, Vivanta, ...) sits behind the SAME Akamai front.
+IHCL_BLOCK_GROUP = "ihcl-akamai"
 
 OUTPUT_DIR = project_root / "output"
 
@@ -46,7 +55,7 @@ else:
     load_dotenv()
 
 try:
-    from hotels.taj_lands_end_mumbai.constants import (
+    from hotels.taj_palace_new_delhi.constants import (
         DEFAULT_CURRENCY,
         DEFAULT_HOTEL_ID,
         DEFAULT_HOTEL_URL,
@@ -82,7 +91,7 @@ except ImportError:
 # ========================================================================= #
 # Low-level API / CMS client
 # ========================================================================= #
-class TajClient:
+class TajPalaceClient:
     """
     Client for interacting with Taj Hotels APIs and Sanity CMS.
     Bypasses Akamai Bot Manager via Chrome TLS impersonation (curl_cffi).
@@ -105,6 +114,25 @@ class TajClient:
             "User-Agent": DEFAULT_USER_AGENT,
         }
         self._catalog_cache: Optional[Dict[str, Any]] = None
+        # Shared pacing clock for all IHCL hotels in this run.
+        self.pacer = Pacer.for_group(IHCL_BLOCK_GROUP)
+
+    def _post(self, url: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        """Paced POST to Hudini. Raises HotelBlockedError on any block signal."""
+        self.pacer.wait()
+        resp = self.session.post(url, headers=self.headers, json=payload,
+                                 timeout=REQUEST_TIMEOUT_S)
+        reason = detect_block(resp.status_code, resp.headers.get("content-type", ""),
+                              resp.text)
+        if reason:
+            raise HotelBlockedError(HOTEL_NAME, reason, IHCL_BLOCK_GROUP)
+        if resp.status_code != 200:
+            # Not a block (e.g. 500 = bad payload / server error): surface it loudly.
+            raise RuntimeError(f"Hudini {url.rsplit('/', 1)[-1]} failed: HTTP {resp.status_code}")
+        try:
+            return resp.json() or {}
+        except ValueError:
+            raise HotelBlockedError(HOTEL_NAME, "non-JSON response from Hudini", IHCL_BLOCK_GROUP)
 
     def _sanity_ref_to_url(self, ref: str) -> Optional[str]:
         """Convert Sanity image ref (image-<hash>-<dim>-<ext>) to HTTPS CDN URL."""
@@ -140,12 +168,16 @@ class TajClient:
             f"{self.SANITY_DATASET}?query={encoded_query}"
         )
 
-        resp = self.session.get(url)
+        resp = self.session.get(url, timeout=REQUEST_TIMEOUT_S)
         if resp.status_code != 200:
-            print(f"[Warning] Failed to fetch Sanity catalog (HTTP {resp.status_code})")
-            return {"hotelName": "Taj Lands End, Mumbai", "rooms": {}}
+            print(f"[Warning] Failed to fetch Sanity catalog (HTTP {resp.status_code}) "
+                  f"-- rows will have no images / CMS room names")
+            self._catalog_cache = {"hotelName": HOTEL_NAME, "rooms": {}}
+            return self._catalog_cache
 
-        data = resp.json().get("result", {})
+        data = resp.json().get("result") or {}
+        if not data:
+            print(f"[Warning] Sanity has no hotel with id {self.hotel_id} -- check HOTEL_ID")
         rooms_dict = {}
         for r in data.get("rooms", []):
             code = r.get("roomCode")
@@ -170,8 +202,8 @@ class TajClient:
             }
 
         self._catalog_cache = {
-            "hotelName": data.get("hotelName", "Taj Lands End, Mumbai"),
-            "identifier": data.get("identifier", "taj-lands-end-mumbai"),
+            "hotelName": data.get("hotelName", HOTEL_NAME),
+            "identifier": data.get("identifier", "taj-palace-new-delhi"),
             "rooms": rooms_dict,
         }
         return self._catalog_cache
@@ -186,10 +218,8 @@ class TajClient:
             "lengthOfStay": length_of_stay,
             "rateFilter": "RRG,PKG,MD",
         }
-        resp = self.session.post(url, headers=self.headers, json=payload)
-        if resp.status_code == 200:
-            return resp.json().get("data", {}).get("getHotelLeadAvailability", {}).get("leadAvailability", [])
-        return []
+        data = self._post(url, payload)
+        return ((data.get("data") or {}).get("getHotelLeadAvailability") or {}).get("leadAvailability") or []
 
     def get_room_availability(
         self,
@@ -226,12 +256,7 @@ class TajClient:
             "forSomeoneElse": False,
         }
 
-        resp = self.session.post(url, headers=self.headers, json=payload)
-        if resp.status_code != 200:
-            print(f"[Error] Availability request failed: HTTP {resp.status_code}")
-            return {}
-
-        return resp.json()
+        return self._post(url, payload)
 
     def extract_structured_rooms(
         self,
@@ -246,13 +271,16 @@ class TajClient:
         catalog = self.get_hotel_catalog()
         rooms_catalog = catalog.get("rooms", {})
 
-        room_availability = avail_data.get("roomAvailability", {})
-        room_rates = room_availability.get("roomRates", [])
-        package_rates = room_availability.get("packagesRates", [])
-        member_rates = room_availability.get("memberExclusiveRates", [])
-        promotion_rates = room_availability.get("promotionRates", [])
+        room_availability = avail_data.get("roomAvailability") or {}
+        room_rates = room_availability.get("roomRates") or []
+        package_rates = room_availability.get("packagesRates") or []
+        member_rates = room_availability.get("memberExclusiveRates") or []
+        promotion_rates = room_availability.get("promotionRates") or []
+        offer_rates = room_availability.get("offerRates") or []
+        # Excluded on purpose: dayUsageRates (day-use, not overnight) and
+        # someoneElseRates (same rates, booked for another guest).
 
-        all_groups = room_rates + package_rates + member_rates + promotion_rates
+        all_groups = room_rates + package_rates + member_rates + promotion_rates + offer_rates
         records = []
 
         occupancy_desc = f"{adults} Adult{'s' if adults != 1 else ''}"
@@ -261,6 +289,7 @@ class TajClient:
         occupancy_desc += f", {rooms} Room{'s' if rooms != 1 else ''}"
 
         for group in all_groups:
+            group = group or {}
             room_code = group.get("roomCode")
             room_info = rooms_catalog.get(room_code, {})
 
@@ -273,32 +302,48 @@ class TajClient:
             image_urls = room_info.get("imageUrls", [])
             images_str = "; ".join(image_urls) if image_urls else ""
 
-            for r in group.get("rooms", []):
-                rate_content = r.get("rateContent", {})
+            for r in group.get("rooms") or []:
+                rate_content = r.get("rateContent") or {}
                 rate_name = rate_content.get("name") or r.get("rateCode")
                 currency = rate_content.get("currencyCode") or "INR"
 
-                details = rate_content.get("details", {})
+                details = rate_content.get("details") or {}
                 rate_desc = (
                     details.get("detailedDescription")
                     or details.get("description")
                     or ""
                 ).strip()
 
-                cancellation_policy = (
-                    r.get("cancellationPolicy", {}).get("description")
-                    or ""
-                ).strip()
+                cancel_obj = r.get("cancellationPolicy") or {}
+                cancellation_policy = (cancel_obj.get("description") or "").strip()
+                cancel_cols = free_cancellation(
+                    check_in,
+                    refundable=cancel_obj.get("isFreeCancellation") if cancel_obj else None,
+                    days_before=cancel_obj.get("cancelTimeIn"),
+                    time_hhmm=cancel_obj.get("cancelTime"),
+                )
+                meal_plan = classify_meal_plan(
+                    r.get("rateCode") or "",
+                    rate_name or "",
+                    rate_desc,
+                    (details.get("indicators") or {}).get("breakfastIncluded"),
+                )
+                # BAR = Best Available (public) rate. Hudini files it as "BAR" or as
+                # "RAC" (rack) -- e.g. Vivanta R04 "Best Available Rate - Room Only".
+                is_bar = "Yes" if (
+                    rate_content.get("categoryCode") in ("BAR", "RAC")
+                    or "best available rate" in (rate_name or "").lower()
+                ) else "No"
 
                 # Pricing
                 std_rate = r.get("standardRate") or {}
                 mem_rate = r.get("memberRate") or {}
                 chosen_rate = std_rate if std_rate.get("total") else mem_rate
 
-                total_obj = chosen_rate.get("total", {})
+                total_obj = chosen_rate.get("total") or {}
                 price = total_obj.get("amount")
                 total_with_taxes = total_obj.get("amountWithTaxesFees")
-                tax_amount = chosen_rate.get("tax", {}).get("amount")
+                tax_amount = (chosen_rate.get("tax") or {}).get("amount")
                 inventory = chosen_rate.get("availableInventory")
 
                 records.append({
@@ -315,6 +360,9 @@ class TajClient:
                     "Rate description in popup modal": rate_desc,
                     "Images url": images_str,
                     "rate type": rate_name,
+                    "Meal Plan": meal_plan,
+                    "Is BAR": is_bar,
+                    **cancel_cols,
                     "Rate Code": r.get("rateCode"),
                     "Room Code": room_code,
                     "Tax Amount": tax_amount,
@@ -338,16 +386,18 @@ def extract_hotel_id(url_or_id: str) -> str:
 # ========================================================================= #
 # Scraper (implements the shared interface)
 # ========================================================================= #
-class TajScraper(BaseHotelScraper):
+class TajPalaceScraper(BaseHotelScraper):
     """Scraper for the Taj Hotels booking platform."""
 
     name = HOTEL_NAME
     label = HOTEL_LABEL
+    block_group = IHCL_BLOCK_GROUP
+    auth_cookies = ()  # verified 2026-11-18: Hudini sets/needs no cookies
 
     def __init__(self, hotel_id: str = DEFAULT_HOTEL_ID, use_claude: bool = False):
         self.hotel_id = hotel_id
         self.use_claude = use_claude
-        self.client = TajClient(hotel_id=hotel_id)
+        self.client = TajPalaceClient(hotel_id=hotel_id)
 
     def scrape(self, request: SearchRequest) -> List[Dict[str, Any]]:
         occ = request.aggregate_occupancy()  # Taj API accepts flat totals only
@@ -364,6 +414,20 @@ class TajScraper(BaseHotelScraper):
         print("==================================================")
 
         all_records: List[Dict[str, Any]] = []
+        try:
+            self._scrape_windows(windows, occ, all_records)
+        except HotelBlockedError as e:
+            e.records = all_records  # keep rows scraped before the block
+            raise
+
+        if not all_records:
+            print("\n[Notice] No room rates for the selected dates.")
+            next_in, next_out = self._find_earliest_available_date()
+            print(f"Nearest suggested availability: {next_in} to {next_out}")
+
+        return all_records
+
+    def _scrape_windows(self, windows, occ, all_records: List[Dict[str, Any]]) -> None:
         for c_in, c_out in windows:
             print(f"\n[Scraping] {c_in} to {c_out} ...")
             avail_data = self.client.get_room_availability(
@@ -383,13 +447,6 @@ class TajScraper(BaseHotelScraper):
             )
             print(f"  -> {len(extracted)} room/rate option(s)")
             all_records.extend(extracted)
-
-        if not all_records:
-            print("\n[Notice] No room rates for the selected dates.")
-            next_in, next_out = self._find_earliest_available_date()
-            print(f"Nearest suggested availability: {next_in} to {next_out}")
-
-        return all_records
 
     def postprocess(
         self, records: List[Dict[str, Any]], request: SearchRequest
@@ -422,7 +479,7 @@ class TajScraper(BaseHotelScraper):
         return arr, dep
 
 
-def _request_from_cli(args, scraper: TajScraper) -> SearchRequest:
+def _request_from_cli(args, scraper: TajPalaceScraper) -> SearchRequest:
     """
     Build a SearchRequest from the legacy manual-date flags, so manual mode
     flows through the same `scrape()` path as the shared config.
@@ -459,7 +516,7 @@ def _request_from_cli(args, scraper: TajScraper) -> SearchRequest:
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Taj Lands End Mumbai Hotel Room & Rate Scraper"
+        description="Taj Palace New Delhi Hotel Room & Rate Scraper"
     )
     parser.add_argument("--url", default=DEFAULT_HOTEL_URL, help="Landing page URL or hotelId")
     parser.add_argument("--hotel-id", default=DEFAULT_HOTEL_ID, help="Taj Hotel ID")
@@ -478,7 +535,7 @@ def main():
     args = parser.parse_args()
 
     hotel_id = extract_hotel_id(args.url or args.hotel_id)
-    scraper = TajScraper(hotel_id=hotel_id, use_claude=args.use_claude)
+    scraper = TajPalaceScraper(hotel_id=hotel_id, use_claude=args.use_claude)
 
     if args.search_request:
         request = load_search_request(args.search_request)

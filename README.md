@@ -34,18 +34,55 @@ python3 main.py
 # Or scrape a specific hotel
 python3 main.py --only leela_ambience_delhi
 python3 main.py --only taj_lands_end_mumbai
+python3 main.py --only vivanta_ahmedabad_sg_highway
 ```
 
 All results are automatically saved into a single timestamped CSV inside `output/` (e.g. `output/output - 2026-11-17_14-03-47.csv`).
 
 ---
 
+## 🖥️ Dashboard (for the contracting team)
+
+**Double-click `start_dashboard.bat`** — the dashboard opens in your browser (http://localhost:8501).
+
+1. **Hotels** — pick one or more.
+2. **Check-in dates (from → to)** — every date in the range is a check-in date.
+3. **Nights per stay** and **Adults per room**.
+4. The page shows *hotels × dates = searches* and the estimated time (≈ 5 s per search; 400 searches ≈ 35 min) **before** you start. Max 1,000 searches per run.
+5. **Get rates** → live progress. You can close the tab; the scrape keeps running. **Cancel** keeps what was already scraped.
+6. **Download Excel** from the Results list.
+
+Only one scrape runs at a time (all IHCL hotels share one bot-protection front).
+
+### The Excel file
+| Sheet | What it shows |
+|---|---|
+| **Compare** | Per hotel × check-in × room, **per night**: Standard BAR, website member price (std −15%), best member offer (e.g. *The City Special*) → **Our Rate = lowest** (member first on a tie) → −discount → −commission → GST → net. Type **Volt's rate** in the yellow column → difference + "Volt higher/lower". Yellow cells at the top (discount %, commission %, GST, "Volt includes GST?", "compare with") are editable; everything recalculates. |
+| **All Rates** | Every **breakfast** rate plan: price excl. GST, website member price, GST, price incl. GST, per-night prices, Rate Type (Standard BAR / Member BAR / Member Offer / Other), Member Only, cancellation terms |
+| **Policies** | Full inclusions + cancellation text per rate plan |
+| **Search Info** | What was searched, per-hotel status (OK / sold out / blocked), GST rule + GST check |
+
+### Prices & GST
+* **Breakfast rates only** in the Excel (Half Board / Full Board / Room Only stay in the raw CSV). Change `excel_meal_plans` in `config/hotels.json`.
+* **Member rates:** member-only offers are recognised from IHCL's CMS (`memberSpecific` offers, e.g. TCSN *The City Special*). The website's "Member Rate" under *Breakfast Inclusive Rate* is **calculated** (standard −15%, `website_member_discount_pct`) — it is not in the booking API.
+* **Discount / commission** (Compare sheet only): defaults 10% then 10% (`discount_pct`, `commission_pct`), editable in Excel.
+* **GST** is the hotel's own tax. The tool checks it against the rule *price excl. GST per night per room below ₹7,500 → 5%, otherwise 18%* and highlights any row that differs (*GST Check* column). **Rule pending team confirmation** — settings in `config/hotels.json` → `pricing`.
+
+---
+
 ## 🏨 Supported Hotels
 
-| Hotel | Directory | Booking Engine | Anti-Bot Technology |
+| Hotels | Defined in | Booking Engine | Anti-Bot |
 |---|---|---|---|
+| **18 IHCL hotels** (Taj, Vivanta, SeleQtions, Gateway) — the team's 16 + Taj Lands End + Vivanta Ahmedabad | `config/hotels.json` → one shared scraper `core/ihcl.py` | IHCL Hudini API | Chrome TLS impersonation (`curl_cffi`), no cookies |
+| **The Leela Ambience, Delhi** | `hotels/leela_ambience_delhi/` | SynXis (Sabre) | Headless browser + Imperva cookies (`Playwright`) |
+
+`python main.py --list` shows every hotel key. Old per-hotel IHCL copies are kept in `archive/` for reference only.
+
+---|---|---|---|
 | **Taj Lands End, Mumbai** | `hotels/taj_lands_end_mumbai/` | Taj / Hudini API | Chrome TLS impersonation (`curl_cffi`) |
 | **The Leela Ambience, Delhi** | `hotels/leela_ambience_delhi/` | SynXis (Sabre) | Headless browser challenge clearance (`Playwright`) |
+| **Vivanta Ahmedabad, SG Highway** | `hotels/vivanta_ahmedabad_sg_highway/` | Taj / Hudini API (`tenant: vivanta`) | Chrome TLS impersonation (`curl_cffi`) |
 
 > Each hotel folder has its own `constants.py` defining its hotel ID, chain ID, URLs, and API endpoints.
 
@@ -66,6 +103,27 @@ If `start_date = "2026-11-17"`, `scrape_for_n_days = 3`, and `night_duration = 2
 
 ---
 
+## 🛡️ Access Safety (avoiding blocks)
+
+**Before a big run or after adding a hotel**, run the pre-flight check:
+```bash
+python tools/check_access.py        # exit 1 = do NOT start a full run
+python -m pytest tests -q           # offline tests for block detection/pacing
+```
+
+| Hotel | Cookies required | What gets us in | Block signal |
+|---|---|---|---|
+| Leela Ambience Delhi | `reese84` (Imperva, ~30d), `sbeSessionID` | Headless browser clears challenge | Challenge page or `401 Principal not found` |
+| Taj Lands End / Taj Palace / Vivanta (IHCL) | none (verified) | Chrome TLS fingerprint (`curl_cffi`) | `403 Access Denied` (Akamai) |
+
+Rules every scraper follows (see `core/access.py`):
+* **Pacing:** random 3–6 s between requests to the same bot-protection front (IHCL hotels share one clock), max 12/min. Tune via `SCRAPE_*` in `.env`.
+* **Stop on first block:** a block raises `HotelBlockedError` → that hotel stops, rows so far are kept, other hotels behind the same front are skipped, run exits `1` and prints `BLOCKED`. A block is never reported as "0 rows".
+* **Cookie hotels:** if cookie generation fails or the session is rejected, the session is rebuilt **once**, then the hotel is marked BLOCKED.
+* **New hotel with cookies:** declare them in `auth_cookies` and make `tools/check_access.py` pass before scheduling it.
+
+---
+
 ## 📂 Project Structure
 
 ```text
@@ -77,9 +135,12 @@ hotel-beaver/
 │   ├── taj_lands_end_mumbai/
 │   │   ├── constants.py         # Hotel ID, URLs, Sanity CMS endpoints
 │   │   └── taj_scraper.py       # Scraper implementation (BaseHotelScraper)
-│   └── leela_ambience_delhi/
-│       ├── constants.py         # Chain ID, Hotel ID, SynXis endpoints
-│       └── leela_scraper.py     # Scraper implementation (BaseHotelScraper)
+│   ├── leela_ambience_delhi/
+│   │   ├── constants.py         # Chain ID, Hotel ID, SynXis endpoints
+│   │   └── leela_scraper.py     # Scraper implementation (BaseHotelScraper)
+│   └── vivanta_ahmedabad_sg_highway/
+│       ├── constants.py         # Hotel ID, tenant, Hudini + Sanity endpoints
+│       └── vivanta_scraper.py   # Scraper implementation (BaseHotelScraper)
 ├── core/                        # Shared framework (interfaces, models, CSV writer)
 ├── output/                      # Generated CSV reports
 └── requirements.txt             # Python dependencies
@@ -104,7 +165,10 @@ LEELA_HEADLESS=1
 
 ## ➕ Adding a New Hotel
 
-1. Create a folder under `hotels/` (e.g. `hotels/my_hotel/`).
-2. Add a `constants.py` for its hotel ID and URLs.
-3. Add a `my_hotel_scraper.py` subclassing `BaseHotelScraper` from `core`.
-4. Run `python3 main.py` — it will automatically discover and run your new scraper!
+**IHCL hotel (Taj / Vivanta / SeleQtions / Gateway / Ginger):** add one line to `config/hotels.json`
+(`key`, `name`, `brand`, `hotel_id` from the IHCL Sanity catalog, `tenant`, `site`).
+Then run `python tools/check_access.py` and a 1–3 date test before giving it to the team.
+
+**Other booking engine:** create `hotels/<key>/<key>_scraper.py` subclassing `BaseHotelScraper`
+(see `hotels/leela_ambience_delhi/`). Declare `auth_cookies` if the API needs cookies, fill
+`Meal Plan`, `Rate Category`, cancellation columns via `core.rates`, and pass `tools/check_access.py`.
