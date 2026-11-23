@@ -4,3 +4,9 @@ beautifulsoup4>=4.12.0
 python-dotenv>=1.0.0
 playwright>=1.40.0  # Leela: headless browser to clear Imperva bot protection
 
+# Dashboard + Excel export
+streamlit==1.37.1   # tested version (uses st.fragment(run_every=...))
+openpyxl>=3.1.0
+
+# Offline tests (setup_windows.bat runs them)
+pytest>=7.4.0

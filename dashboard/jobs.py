@@ -48,7 +48,9 @@ def list_runs(limit: int = 15) -> List[Dict[str, Any]]:
     if not RUNS_DIR.exists():
         return []
     runs = []
-    for d in sorted(RUNS_DIR.iterdir(), reverse=True)[:limit]:
+    dirs = [d for d in RUNS_DIR.iterdir() if (d / "params.json").exists()]
+    # newest first by when the run was set up (folder names are not always timestamps)
+    for d in sorted(dirs, key=lambda d: (d / "params.json").stat().st_mtime, reverse=True)[:limit]:
         params, status = _read(d / "params.json"), _read(d / "status.json")
         if params:
             runs.append({"dir": d, "params": params, "status": status or {"state": "queued"}})

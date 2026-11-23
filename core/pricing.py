@@ -21,12 +21,17 @@ from __future__ import annotations
 from datetime import date
 from typing import Any, Dict, List, Optional
 
-STANDARD_BAR = "Standard BAR"
-MEMBER_BAR = "Member BAR"
-OTHER = "Other"
+STANDARD_BAR = "Standard BAR"     # website STANDARD RATE of a BAR plan, e.g. "Breakfast Inclusive Rate"
+MEMBER_BAR = "Member BAR"         # website MEMBER RATE of that plan (e.g. 32,500 -> 27,625)
+MEMBER_OFFER = "Member Offer"     # member-only promotion, e.g. TCSN "The City Special"
+OTHER = "Other"                   # public packages / promotions
+MEMBER_CATEGORIES = (MEMBER_BAR, MEMBER_OFFER)
 
 DEFAULT_SETTINGS = {"gst_low_pct": 5.0, "gst_high_pct": 18.0,
-                    "gst_threshold_per_night": 7500.0, "gst_threshold_inclusive": True}
+                    "gst_threshold_per_night": 7500.0, "gst_threshold_inclusive": True,
+                    # Compare sheet (editable in Excel): our rate -> -discount -> -commission
+                    "discount_pct": 10.0, "commission_pct": 10.0,
+                    "excel_meal_plans": ["Breakfast (BnB)"]}
 
 
 def _nightly(record: Dict[str, Any], nights: int, total: float) -> List[float]:
@@ -70,6 +75,7 @@ def price_columns(record: Dict[str, Any], settings: Optional[Dict[str, Any]] = N
              else f"Differs: hotel {hotel_gst:,.0f} vs rule {rule_gst:,.0f}")
     label = (f"{min(slabs):g}%" if len(slabs) == 1
              else "Mixed " + "/".join(f"{x:g}%" for x in sorted(slabs)))
+    web_member = ""
     return {
         "Nights": nights,
         "GST %": label,

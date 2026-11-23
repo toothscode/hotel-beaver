@@ -52,7 +52,8 @@ def progress_panel(run_dir: Path):
 
 # --------------------------------------------------------------------------- #
 st.title("🏨 Hotel Rate Finder")
-st.caption("Live rates from hotel websites → clean Excel with prices, GST and cancellation terms.")
+st.caption("Live breakfast rates (standard + member) from hotel websites → Excel with our lowest rate, "
+           "discount, commission, GST and a Volt comparison column.")
 
 active = jobs.active_run()
 if active:
@@ -113,7 +114,11 @@ if not runs:
     st.caption("No results yet.")
 for run in runs:
     p, s = run["params"], run["status"]
-    when = datetime.strptime(run["dir"].name, "%Y-%m-%d_%H-%M-%S").strftime("%d %b, %I:%M %p")
+    try:   # dashboard runs are named by start time; tool/manual runs may have any name
+        started = datetime.strptime(run["dir"].name, "%Y-%m-%d_%H-%M-%S")
+    except ValueError:
+        started = datetime.fromtimestamp(run["dir"].stat().st_mtime)
+    when = started.strftime("%d %b, %I:%M %p")
     state = s.get("state", "?")
     icon = {"done": "✅", "cancelled": "✖️", "failed": "❌"}.get(state, "⚠️")
     problems = [h for h in s.get("hotels", []) if h["state"] not in ("ok",)]
@@ -124,7 +129,10 @@ for run in runs:
                   f" · {s.get('rows', 0)} rates · {s.get('note', state)}")
         for h in problems:
             a.caption(f"{STATE_ICON.get(h['state'], '•')} {h['name']}: {h.get('detail') or h['state']}")
-        if s.get("excel") and Path(s["excel"]).exists():
-            b.download_button("Download Excel", data=Path(s["excel"]).read_bytes(),
-                              file_name=Path(s["excel"]).name, key=str(run["dir"]),
+        # every Excel in the run folder (dashboard export + Supplier Check / Lowest Member reports)
+        for x in sorted(run["dir"].glob("*.xlsx")):
+            if x.name.startswith("~$"):     # Excel's lock file while the workbook is open
+                continue
+            b.download_button(f"⬇ {x.stem[:40]}", data=x.read_bytes(), file_name=x.name,
+                              key=f"{run['dir']}|{x.name}", use_container_width=True,
                               mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")

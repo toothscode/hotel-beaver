@@ -6,9 +6,19 @@
     "gst_high_pct": 18,
     "gst_threshold_per_night": 7500,
     "gst_threshold_inclusive": true,
-    "_gst_note": "PENDING TEAM CONFIRMATION: GST slab decided on price excl. GST per night per room; < 7,500 -> 5%, else 18%; exactly 7,500 -> 5% while inclusive=true. TAC/discounts are applied by the team later, not by this tool."
+    "_gst_note": "PENDING TEAM CONFIRMATION: GST slab decided on price excl. GST per night per room (before discount); < 7,500 -> 5%, else 18%; exactly 7,500 -> 5% while inclusive=true.",
+    "discount_pct": 10,
+    "commission_pct": 10,
+    "_compare_note": "Excel Compare sheet: Our Rate (lowest breakfast rate, member first) - discount% - commission% -> GST. Defaults only; the team edits the yellow cells in Excel.",
+    "excel_meal_plans": ["Breakfast (BnB)"]
   },
 
+  "_supplier_note": "Hotels for the Supplier vs Volt sheet (tools/supplier_vs_volt.py, skill 'supplier-vs-volt'). Add a key here to include a hotel.",
+  "supplier_hotels": ["taj_tirupati", "taj_palace_new_delhi", "taj_surajkund", "taj_damdama_lake",
+                      "taj_gandhinagar", "taj_bangalore", "taj_falaknuma_palace", "taj_exotica_andamans",
+                      "taj_fishermans_cove", "taj_mahal_new_delhi",
+                      "boulevard9_nadiad", "vivanta_ekta_nagar", "gateway_diu", "fort_house_diu",
+                      "vivanta_katra", "savoy_ooty"],
 
   "hotels": [
     { "key": "taj_tirupati", "name": "Taj Tirupati, Tirupati", "brand": "Taj", "engine": "ihcl", "hotel_id": "b862d039-3846-4fd0-8127-a3b8f5f2d9e2", "tenant": "taj", "site": "https://www.tajhotels.com" },

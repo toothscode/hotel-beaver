@@ -57,13 +57,15 @@ Only one scrape runs at a time (all IHCL hotels share one bot-protection front).
 ### The Excel file
 | Sheet | What it shows |
 |---|---|
-| **Best Deals** | Cheapest rate (price incl. GST) per hotel × check-in × meal plan, plus the cheapest refundable alternative |
-| **All Rates** | Every room × rate plan: price excl. GST, GST %, GST, price incl. GST, per-night prices, Rate Type (Standard BAR / Member BAR / Other), cancellation terms |
+| **Compare** | Per hotel × check-in × room, **per night**: Standard BAR, website member price (std −15%), best member offer (e.g. *The City Special*) → **Our Rate = lowest** (member first on a tie) → −discount → −commission → GST → net. Type **Volt's rate** in the yellow column → difference + "Volt higher/lower". Yellow cells at the top (discount %, commission %, GST, "Volt includes GST?", "compare with") are editable; everything recalculates. |
+| **All Rates** | Every **breakfast** rate plan: price excl. GST, website member price, GST, price incl. GST, per-night prices, Rate Type (Standard BAR / Member BAR / Member Offer / Other), Member Only, cancellation terms |
 | **Policies** | Full inclusions + cancellation text per rate plan |
 | **Search Info** | What was searched, per-hotel status (OK / sold out / blocked), GST rule + GST check |
 
 ### Prices & GST
-* **No TAC / discount is applied** — the team decides 10% / 15% using the *Rate Type* column.
+* **Breakfast rates only** in the Excel (Half Board / Full Board / Room Only stay in the raw CSV). Change `excel_meal_plans` in `config/hotels.json`.
+* **Member rates:** member-only offers are recognised from IHCL's CMS (`memberSpecific` offers, e.g. TCSN *The City Special*). The website's "Member Rate" under *Breakfast Inclusive Rate* is **calculated** (standard −15%, `website_member_discount_pct`) — it is not in the booking API.
+* **Discount / commission** (Compare sheet only): defaults 10% then 10% (`discount_pct`, `commission_pct`), editable in Excel.
 * **GST** is the hotel's own tax. The tool checks it against the rule *price excl. GST per night per room below ₹7,500 → 5%, otherwise 18%* and highlights any row that differs (*GST Check* column). **Rule pending team confirmation** — settings in `config/hotels.json` → `pricing`.
 
 ---

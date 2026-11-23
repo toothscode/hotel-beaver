@@ -55,6 +55,8 @@ class OutputRecord:
     )
     # ---- Price + GST (core/pricing.py). No TAC: the team applies it. ---- #
     rate_category: str = field(default="", metadata={"header": "Rate Category"})
+    price_type: str = field(default="", metadata={"header": "Price Type"})
+    member_only: str = field(default="", metadata={"header": "Member Only"})
     nights: Any = field(default="", metadata={"header": "Nights"})
     nightly_rates: str = field(default="", metadata={"header": "Nightly Rates (excl. tax)"})
     gst_pct: str = field(default="", metadata={"header": "GST %"})

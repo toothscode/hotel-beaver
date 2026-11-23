@@ -24,7 +24,7 @@ from curl_cffi import requests
 from .access import (REQUEST_TIMEOUT_S, HotelBlockedError, Pacer, ScrapeInterrupted,
                      detect_block)
 from .base import BaseHotelScraper
-from .pricing import MEMBER_BAR, OTHER, STANDARD_BAR
+from .pricing import MEMBER_BAR, MEMBER_OFFER, OTHER, STANDARD_BAR
 from .rates import classify_meal_plan, free_cancellation
 from .search_request import SearchRequest
 
@@ -128,14 +128,21 @@ class IHCLClient:
 
     def get_room_availability(self, start_date: str, end_date: str,
                               adults: int = 2, children: int = 0, rooms: int = 1) -> Dict[str, Any]:
+        # EXACTLY the request tajhotels.com sends for its "Room Rates" tab (captured from
+        # the live website in Chrome, 2026-11-19). rateFilter "RRM" + memberTier "member"
+        # returns each plan with BOTH prices the website shows: STANDARD RATE and MEMBER
+        # RATE (e.g. Taj Mahal 6 Dec Luxury Twin: 32,500 / 27,625), plus member-only offers
+        # (The City Special). The old "RRG,PKG,MD"/"copper" request did NOT return the
+        # website member price -- do not go back to it.
         payload = {
             "hotelId": self.hotel_id, "startDate": start_date, "endDate": end_date,
             "numRooms": rooms, "adults": adults, "children": children,
-            "rateFilter": "RRG,PKG,MD", "memberTier": "copper", "package": "PKG",
+            "rateFilter": "RRM", "memberTier": "member", "package": "PKG",
             "isOfferLandingPage": False, "rateCode": None, "promoCode": None,
             "promoType": None, "couponCode": None, "agentId": None, "agentType": None,
             "isMyAccount": False, "isCorporate": False, "isLogin": False,
             "isMemberOffer1": False, "isMemberOffer2": False, "forSomeoneElse": False,
+            "isEmployeeOffer": False,
         }
         return self._post(f"{HUDINI_BASE_URL}/hotel-availability", payload)
 
@@ -189,18 +196,35 @@ class IHCLClient:
                 # e.g. Vivanta R04 "Best Available Rate - Room Only" is RAC.
                 is_bar = (content.get("categoryCode") in ("BAR", "RAC")
                           or "best available rate" in rate_name.lower())
-                # Member rate = negotiated loyalty rate, e.g. NPGBB "Member Rate Gold - ...".
-                is_member = (details.get("rateClass") == "Negotiated"
-                             and "member rate" in rate_name.lower())
-                rate_category = MEMBER_BAR if is_member else STANDARD_BAR if is_bar else OTHER
-
                 std = r.get("standardRate") or {}
-                chosen = std if std.get("total") else (r.get("memberRate") or {})
-                total = chosen.get("total") or {}
-                nightly = [((d or {}).get("price") or {}).get("amount")
-                           for d in chosen.get("daily") or []]
+                mem = r.get("memberRate") or {}
+                has_std, has_mem = bool(std.get("total")), bool(mem.get("total"))
+                # One row per price the website shows for this plan:
+                #   STANDARD RATE -> Standard BAR (BAR/RAC plan) or Other
+                #   MEMBER RATE   -> Member BAR (member price of a plan that also has a
+                #                    standard price, e.g. NPMBB 32,500 -> 27,625) or
+                #                    Member Offer (member-only plan, e.g. TCSN City Special)
+                prices = []
+                if has_std:
+                    prices.append(("Standard", std, STANDARD_BAR if is_bar else OTHER, rate_name))
+                if has_mem:
+                    prices.append(("Member", mem, MEMBER_BAR if has_std else MEMBER_OFFER,
+                                   f"{rate_name} - Member Rate" if has_std else rate_name))
+                for price_type, chosen, rate_category, plan_name in prices:
+                    total = chosen.get("total") or {}
+                    nightly = [((d or {}).get("price") or {}).get("amount")
+                               for d in chosen.get("daily") or []]
+                    records.append(self._record(
+                        room_name, check_in, check_out, occupancy, adults, children, rooms, total,
+                        content, cancel, rate_desc, images, plan_name, meal_plan, is_bar,
+                        rate_category, price_type, cancel_cols, r, room_code, chosen, nightly))
+        return records
 
-                records.append({
+    @staticmethod
+    def _record(room_name, check_in, check_out, occupancy, adults, children, rooms, total, content,
+                cancel, rate_desc, images, plan_name, meal_plan, is_bar, rate_category, price_type,
+                cancel_cols, r, room_code, chosen, nightly) -> Dict[str, Any]:
+        return {
                     "Room Name": room_name,
                     "Check In Date": check_in,
                     "Check Out Date": check_out,
@@ -213,10 +237,12 @@ class IHCLClient:
                     "Cancellation policy in popup modal": (cancel.get("description") or "").strip(),
                     "Rate description in popup modal": rate_desc,
                     "Images url": images,
-                    "rate type": rate_name,
+                    "rate type": plan_name,
                     "Meal Plan": meal_plan,
                     "Is BAR": "Yes" if is_bar else "No",
                     "Rate Category": rate_category,
+                    "Price Type": price_type,
+                    "Member Only": "Yes" if rate_category == MEMBER_OFFER else "No",
                     **cancel_cols,
                     "Rate Code": r.get("rateCode"),
                     "Room Code": room_code,
@@ -224,8 +250,7 @@ class IHCLClient:
                     "Total With Tax": total.get("amountWithTaxesFees"),
                     "Available Inventory": chosen.get("availableInventory"),
                     "Nightly Rates (excl. tax)": "; ".join(f"{a:.2f}" for a in nightly if a is not None),
-                })
-        return records
+        }
 
 
 class IHCLScraper(BaseHotelScraper):

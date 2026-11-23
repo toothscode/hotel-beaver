@@ -114,7 +114,7 @@ def test_ihcl_null_fields_do_not_crash(key):
         "standardRate": None, "memberRate": {"total": None, "tax": None}}]}],
         "packagesRates": None}}
     rows = s.client.extract_structured_rooms(data, "2030-01-01", "2030-01-02")
-    assert len(rows) == 1 and rows[0]["Rate"] is None
+    assert rows == []          # no price in the response -> no row (never an empty or invented price)
 
 
 def test_registry_has_all_16_team_hotels_unique():
